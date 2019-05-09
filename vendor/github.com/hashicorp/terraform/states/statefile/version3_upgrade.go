@@ -301,7 +301,7 @@ func upgradeInstanceObjectV3ToV4(rsOld *resourceStateV2, isOld *instanceStateV2,
 
 	dependencies := make([]string, len(rsOld.Dependencies))
 	for i, v := range rsOld.Dependencies {
-		dependencies[i] = parseLegacyDependency(v)
+		dependencies[i] = strings.TrimSuffix(v, ".*")
 	}
 
 	return &instanceObjectStateV4{
@@ -412,20 +412,4 @@ func simplifyImpliedValueType(ty cty.Type) cty.Type {
 		// No other normalizations are possible
 		return ty
 	}
-}
-
-func parseLegacyDependency(s string) string {
-	parts := strings.Split(s, ".")
-	ret := parts[0]
-	for _, part := range parts[1:] {
-		if part == "*" {
-			break
-		}
-		if i, err := strconv.Atoi(part); err == nil {
-			ret = ret + fmt.Sprintf("[%d]", i)
-			break
-		}
-		ret = ret + "." + part
-	}
-	return ret
 }

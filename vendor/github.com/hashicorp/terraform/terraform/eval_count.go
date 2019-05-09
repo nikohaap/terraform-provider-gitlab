@@ -23,10 +23,36 @@ import (
 // the "count" behavior should not be enabled for this resource at all.
 //
 // If error diagnostics are returned then the result is always the meaningless
-// placeholder value -1.
+// placeholder value -1, except in one case: if the count expression evaluates
+// to an unknown number value then the result is zero, allowing this situation
+// to be treated by the caller as special if needed. For example, an early
+// graph walk may wish to just silently skip resources with unknown counts
+// to allow them to be dealt with in a later graph walk where more information
+// is available.
 func evaluateResourceCountExpression(expr hcl.Expression, ctx EvalContext) (int, tfdiags.Diagnostics) {
-	count, known, diags := evaluateResourceCountExpressionKnown(expr, ctx)
-	if !known {
+	if expr == nil {
+		return -1, nil
+	}
+
+	var diags tfdiags.Diagnostics
+	var count int
+
+	countVal, countDiags := ctx.EvaluateExpr(expr, cty.Number, nil)
+	diags = diags.Append(countDiags)
+	if diags.HasErrors() {
+		return -1, diags
+	}
+
+	switch {
+	case countVal.IsNull():
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid count argument",
+			Detail:   `The given "count" argument value is null. An integer is required.`,
+			Subject:  expr.Range().Ptr(),
+		})
+		return -1, diags
+	case !countVal.IsKnown():
 		// Currently this is a rather bad outcome from a UX standpoint, since we have
 		// no real mechanism to deal with this situation and all we can do is produce
 		// an error message.
@@ -39,36 +65,11 @@ func evaluateResourceCountExpression(expr hcl.Expression, ctx EvalContext) (int,
 			Detail:   `The "count" value depends on resource attributes that cannot be determined until apply, so Terraform cannot predict how many instances will be created. To work around this, use the -target argument to first apply only the resources that the count depends on.`,
 			Subject:  expr.Range().Ptr(),
 		})
-	}
-	return count, diags
-}
-
-// evaluateResourceCountExpressionKnown is like evaluateResourceCountExpression
-// except that it handles an unknown result by returning count = 0 and
-// a known = false, rather than by reporting the unknown value as an error
-// diagnostic.
-func evaluateResourceCountExpressionKnown(expr hcl.Expression, ctx EvalContext) (count int, known bool, diags tfdiags.Diagnostics) {
-	if expr == nil {
-		return -1, true, nil
-	}
-
-	countVal, countDiags := ctx.EvaluateExpr(expr, cty.Number, nil)
-	diags = diags.Append(countDiags)
-	if diags.HasErrors() {
-		return -1, true, diags
-	}
-
-	switch {
-	case countVal.IsNull():
-		diags = diags.Append(&hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  "Invalid count argument",
-			Detail:   `The given "count" argument value is null. An integer is required.`,
-			Subject:  expr.Range().Ptr(),
-		})
-		return -1, true, diags
-	case !countVal.IsKnown():
-		return 0, false, diags
+		// We return zero+errors in this one case to allow callers to handle
+		// an unknown count as special. This is rarely necessary, but is used
+		// by the validate walk in particular so that it can just skip
+		// validation in this case, assuming a later walk will take care of it.
+		return 0, diags
 	}
 
 	err := gocty.FromCtyValue(countVal, &count)
@@ -79,7 +80,7 @@ func evaluateResourceCountExpressionKnown(expr hcl.Expression, ctx EvalContext) 
 			Detail:   fmt.Sprintf(`The given "count" argument value is unsuitable: %s.`, err),
 			Subject:  expr.Range().Ptr(),
 		})
-		return -1, true, diags
+		return -1, diags
 	}
 	if count < 0 {
 		diags = diags.Append(&hcl.Diagnostic{
@@ -88,10 +89,10 @@ func evaluateResourceCountExpressionKnown(expr hcl.Expression, ctx EvalContext) 
 			Detail:   `The given "count" argument value is unsuitable: negative numbers are not supported.`,
 			Subject:  expr.Range().Ptr(),
 		})
-		return -1, true, diags
+		return -1, diags
 	}
 
-	return count, true, diags
+	return count, diags
 }
 
 // fixResourceCountSetTransition is a helper function to fix up the state when a

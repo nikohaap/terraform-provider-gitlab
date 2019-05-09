@@ -51,7 +51,7 @@ func removeConfigUnknowns(cfg map[string]interface{}) {
 		switch v := v.(type) {
 		case string:
 			if v == config.UnknownVariableValue {
-				delete(cfg, k)
+				cfg[k] = ""
 			}
 		case []interface{}:
 			for _, i := range v {

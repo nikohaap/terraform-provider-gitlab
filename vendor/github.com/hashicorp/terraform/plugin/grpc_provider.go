@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"sync"
 
@@ -44,9 +45,9 @@ type GRPCProvider struct {
 	// This allows the GRPCProvider a way to shutdown the plugin process.
 	PluginClient *plugin.Client
 
-	// TestServer contains a grpc.Server to close when the GRPCProvider is being
+	// TestListener contains a net.Conn to close when the GRPCProvider is being
 	// used in an end to end test of a provider.
-	TestServer *grpc.Server
+	TestListener io.Closer
 
 	// Proto client use to make the grpc service calls.
 	client proto.ProviderClient
@@ -543,9 +544,9 @@ func (p *GRPCProvider) ReadDataSource(r providers.ReadDataSourceRequest) (resp p
 func (p *GRPCProvider) Close() error {
 	log.Printf("[TRACE] GRPCProvider: Close")
 
-	// Make sure to stop the server if we're not running within go-plugin.
-	if p.TestServer != nil {
-		p.TestServer.Stop()
+	// close the remote listener if we're running within a test
+	if p.TestListener != nil {
+		p.TestListener.Close()
 	}
 
 	// Check this since it's not automatically inserted during plugin creation.
